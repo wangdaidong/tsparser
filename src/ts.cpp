@@ -263,7 +263,7 @@ int stream::get_aac_buffer(const unsigned char* data, int data_len,
 			int bufferlen = ((hi << 16) + (mid << 8) + (low)) >> 5;
 			int sample_rate = (data[i + 2] & 0x3c) >> 2;
 			//数据传输有丢失 导致
-			if(bufferlen<=0){
+			if (bufferlen <= 0) {
 				return -2;
 			}
 
@@ -324,12 +324,153 @@ void stream::parse_aac(stream_data* s_data) {
 		if (ret >= 0) {
 			stream_data s(s_data->_id, 0, s_data->_s_type,
 					_frame_data + offset + start_pos, len, _pts, _dts);
+			//QSC_LOG_INFO("stream::parse_aac dts = %ld, pts = %ld",_dts,_pts);
 			_cb(&s);
 			offset += len;
 		} else {
 			//将剩余数据放到buffer的最前面
-			if(ret==-2)
-				offset+=2;
+			if (ret == -2)
+				offset += 2;
+			memmove(_frame_data, _frame_data + offset, _frame_len - offset);
+			memset(_frame_data + offset, 0, offset);
+			_frame_len -= offset;
+			break;
+		}
+	}
+}
+
+/**
+ * 解析一帧mpx数据x=1,2,3
+ * @param data: 输入数据buffer
+ * @param data_len: 输入数据长度
+ * @param start_pos： 第一帧开始位置
+ * @param buffer_len：第一帧数据长度
+ * @return 0成功
+ */
+int stream::get_mpx_buffer(const unsigned char* data, int data_len,
+		int& start_pos, int& buffer_len) {
+	//各个bitrate index and layer 对应的bitrate
+	static int bit_rate_idx[4][16] = { { 0 }, { 0, 32, 40, 48, 56, 64, 80, 96,
+			112, 128, 160, 192, 224, 256, 320, 0 }, { 0, 32, 48, 56, 64, 80, 96,
+			112, 128, 160, 192, 224, 256, 320, 384, 0 }, { 0, 32, 64, 96, 128,
+			160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 0 } };
+	//sample_freq_index->sample_frequency
+	static int sample_frequency[4] = { 44100, 48000, 32000, 0 };
+	//layer=1,buffer length=384;layer=2,buffer length=1152;layer=3,buffer length=1152;
+	static int buffer_length[4] = { 0, 384, 1152, 1152 };
+	start_pos = buffer_len = 0;
+	int i = 0;
+	for (i = 0; i < (data_len - 2); i++) {
+		//mp2包头判断
+		if ((data[i] & 0xff) == 0xff && (data[i + 1] & 0xf0) == 0xf0) {
+			unsigned char id = (data[i + 1] & 0x08) >> 3;
+			if (id == 0)
+				return -5;
+			short layer = (data[i + 1] & 0x06) >> 1;
+			//layer must eq 1,2,3.it present mp1,mp2,mp3
+			if (layer > 3 || layer < 1)
+				return -3;
+			//unsigned char protec_bit = (data[i + 1] & 0x01);
+			short bitrate_inx = (data[i + 2] & 0xf0) >> 4;
+			int bit_rate = bit_rate_idx[layer][bitrate_inx];
+			if (bit_rate == 0)
+				return -6;
+
+			unsigned short sample_freq = (data[i + 2] & 0x0c) >> 2;
+			if (sample_freq > 2)
+				return -4;
+			//unsigned char padding = (data[i + 2] & 0x02) >> 1;
+			//unsigned char pri_bit = (data[i + 2] & 0x01);
+
+			//short mode = (data[i + 3] & 0xc0) >> 6;
+			//short mode_exten = (data[i + 3] & 0x30) >> 4;
+			//unsigned char copy_right = (data[i + 3] & 0x08) >> 3;
+			//unsigned char orig = (data[i + 3] & 0x06) >> 2;
+			//short emphasis = (data[i + 3] & 0x03);
+
+			int pcm_count = buffer_length[layer];
+			int sample_rate = sample_frequency[sample_freq];
+			float duration = 1000.0 * pcm_count / sample_rate;
+			int addPts = duration * 90;
+			int bufferlen = bit_rate * duration / 8;
+			//auto oo=bit_rate*duration/8;
+			//int frames = (data[i + 6] & 0xc0);
+			//int header_len = (data[i+1]&0x01)==1?7:9;
+			//如果检测到的数据长度恰好在边界上，则直接取数据
+			/*if (i + bufferlen + 1 == data_len || i + bufferlen == data_len) {
+			 start_pos = i;
+			 buffer_len = bufferlen;
+			 //if ((sample_rate >= 0 && sample_rate < 13)) {
+			 _pts += _additonal_pts;
+			 _additonal_pts = addPts;
+			 //}
+			 return 1;
+			 }*/
+			//如果检测到的数据长度比送进的数据长度长，则返回检测失败
+			if (i + bufferlen + 1 > data_len)
+				return -1;
+			_additonal_pts = addPts;
+
+			//正常情况一帧的结束，后面紧接着一帧的开始
+			if ((data[i + bufferlen] & 0xff) == 0xff
+					&& (data[i + bufferlen + 1] & 0xf0) == 0xf0) {
+				start_pos = i;
+				buffer_len = bufferlen;
+				//if ((sample_rate >= 0 && sample_rate < 13)) {
+				//_pts += _additonal_pts;
+				//_additonal_pts = addPts;
+				//}
+				return 1;
+			}
+
+			if ((data[i + bufferlen + 1] & 0xff) == 0xff
+					&& (data[i + bufferlen + 2] & 0xf0) == 0xf0) {
+				start_pos = i;
+				buffer_len = bufferlen + 1;
+				//if ((sample_rate >= 0 && sample_rate < 13)) {
+				//_pts += _additonal_pts;
+				//_additonal_pts = addPts;
+				//}
+				return 1;
+			}
+			return -1;
+		}
+	}
+	return -1;
+}
+
+/**
+ * 解析mpx x=1,2,3
+ * @param s_data
+ */
+void stream::parse_mpx(stream_data* s_data) {
+	//判断是否有PES包，如果有就把上一次pes包之后的数据剩下的反给回调函数
+	//并清空数据
+	if (s_data->_flag == 0x01 && _frame_len != 0) {
+		stream_data s(s_data->_id, 0, s_data->_s_type, _frame_data, _frame_len,
+				_pre_pts, _pre_dts);
+		_cb(&s);
+		memset(_frame_data, 0, BUFFER_SIZE);
+		_frame_len = 0;
+	}
+
+	int start_pos = 0, len = 0, offset = 0;
+	memcpy(_frame_data + _frame_len, s_data->_data, s_data->_len);
+	_frame_len += s_data->_len;
+	while (true) {
+		auto ret = get_mpx_buffer(_frame_data + offset, _frame_len - offset,
+				start_pos, len);
+		if (ret >= 0) {
+			stream_data s(s_data->_id, 0, s_data->_s_type,
+					_frame_data + offset + start_pos, len, _pts, _dts);
+			//QSC_LOG_INFO("stream::parse_aac dts = %ld, pts = %ld",_dts,_pts);
+			_cb(&s);
+			offset += len;
+			_pts += _additonal_pts;
+		} else {
+			//将剩余数据放到buffer的最前面
+			if (ret == -2)
+				offset += 2;
 			memmove(_frame_data, _frame_data + offset, _frame_len - offset);
 			memset(_frame_data + offset, 0, offset);
 			_frame_len -= offset;
@@ -348,6 +489,7 @@ void stream::parse_pictrue(stream_data* s_data) {
 		if (_cb) {
 			stream_data s(s_data->_id, 0, s_data->_s_type, _frame_data,
 					_frame_len, _pre_pts, _pre_dts);
+			//QSC_LOG_INFO("stream::parse_pictrue dts = %ld, pts = %ld",_dts,_pts);
 			_cb(&s);
 		}
 		_frame_len = 0;
@@ -365,6 +507,9 @@ void stream::parse_pictrue(stream_data* s_data) {
 void stream::parse_buffer(stream_data* s_data) {
 	switch (s_data->_s_type) {
 	case ts::invalid:
+		break;
+	case ts::mpx:
+		parse_mpx(s_data);
 		break;
 	case ts::aac:
 		parse_aac(s_data);
@@ -413,7 +558,7 @@ void stream::parse(const unsigned char* buff, int buff_len, bool pes) {
 		case 2: //pts only
 			pts = decode_pts(buff + 9);
 			//if (_stream_type != aac)
-				dts = pts;
+			dts = pts;
 			break;
 		}
 		_pre_pts = _pts;
@@ -422,8 +567,10 @@ void stream::parse(const unsigned char* buff, int buff_len, bool pes) {
 			_last_pts = pts;
 		_pts = pts;
 		//if (_dts < dts)
-			_dts = dts;
+		_dts = dts;
 		_additonal_pts = 0;
+		/*QSC_LOG_INFO("stream::parse pes type = %d,dts = %ld, pts = %ld",
+		 (int)_stream_type,_dts,_pts);*/
 	}
 
 	//h264数据偏移

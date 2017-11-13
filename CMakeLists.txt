@@ -23,6 +23,9 @@ if(WARN)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
 endif()
 
+#oupt put directory
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/bin)
+
 file(GLOB tsparser_src	"${CMAKE_CURRENT_SOURCE_DIR}/src/*")
 
 # add the executable

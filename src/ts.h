@@ -27,7 +27,11 @@ typedef unsigned long long uint64;
 
 namespace ts {
 enum stream_type {
-	invalid = -1, h264 = 0x1b, aac = 0xf, h265 = 0x27
+	invalid = -1,
+	mpx = 0x03/*x=1,2,3 refrence ISO_IEC_11172*/,
+	aac = 0xf,
+	h264 = 0x1b,
+	h265 = 0x27
 };
 
 struct stream_data {
@@ -201,9 +205,12 @@ public:
 private:
 	int get_aac_buffer(const unsigned char* data, int data_len, int& start_pos,
 			int& buffer_len);
+	int get_mpx_buffer(const unsigned char* data, int data_len, int& start_pos,
+			int& buffer_len);
 	void parse_buffer(stream_data* s_data);
 	void parse_pictrue(stream_data* s_data);
 	void parse_aac(stream_data* s_data);
+	void parse_mpx(stream_data* s_data);
 	uint16 _id = 0;
 	stream_type _stream_type = invalid; //0x1b h264; 0xf aac; 0x27 h265
 	uint8 _stream_id = 0; //audio:110x xxxx; video:1110 xxxx
