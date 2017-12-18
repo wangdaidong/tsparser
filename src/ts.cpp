@@ -447,9 +447,13 @@ void stream::parse_mpx(stream_data* s_data) {
 	//判断是否有PES包，如果有就把上一次pes包之后的数据剩下的反给回调函数
 	//并清空数据
 	if (s_data->_flag == 0x01 && _frame_len != 0) {
-		stream_data s(s_data->_id, 0, s_data->_s_type, _frame_data, _frame_len,
-				_pre_pts, _pre_dts);
-		_cb(&s);
+		//data must a frame
+		if ((_frame_data[0] & 0xff) == 0xff
+				&& (_frame_data[1] & 0xf0) == 0xf0) {
+			stream_data s(s_data->_id, 0, s_data->_s_type, _frame_data,
+					_frame_len, _pre_pts, _pre_dts);
+			_cb(&s);
+		}
 		memset(_frame_data, 0, BUFFER_SIZE);
 		_frame_len = 0;
 	}
